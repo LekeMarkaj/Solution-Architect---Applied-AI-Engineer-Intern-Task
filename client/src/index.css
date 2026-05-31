@@ -121,3 +121,14 @@ body {
 .style-btn-active {
   box-shadow: 0 0 12px rgba(249, 115, 22, 0.4);
 }
+
+/* ── Mobile responsive overrides ────────────────────────── */
+
+@media (max-width: 480px) {
+  .github-prefix {
+    display: none;
+  }
+  .username-input {
+    padding-left: 1rem !important;
+  }
+}

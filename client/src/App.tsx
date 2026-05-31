@@ -444,7 +444,7 @@ export default function App() {
           </label>
           <div className="flex gap-2.5">
             <div className="flex-1 relative">
-              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm select-none">
+              <span className="github-prefix absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 text-sm select-none">
                 github.com /
               </span>
               <input

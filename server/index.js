@@ -1,9 +1,17 @@
 import express from 'express'
 import cors from 'cors'
 import Groq from 'groq-sdk'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+import { existsSync } from 'fs'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname  = dirname(__filename)
+
+const isProd = process.env.NODE_ENV === 'production'
+const PORT   = isProd ? (parseInt(process.env.PORT) || 5000) : 3001
 
 const app = express()
-const PORT = 3001
 
 app.use(cors({ origin: '*' }))
 app.use(express.json())
@@ -95,6 +103,19 @@ function buildUserContext(profile, repos, analysis) {
     return parts.join(' ')
   })
 
+  // Edge-case notes for the LLM
+  const notes = []
+  if (profile.public_repos === 0)
+    notes.push('⚠️ This user has ZERO public repositories. Roast the emptiness, the potential, or the mystery.')
+  else if (analysis.ownRepos.length === 0 && analysis.forkedRepos.length > 0)
+    notes.push('⚠️ Every single repo here is a fork — this person has no original public work.')
+  if (parseFloat(accountAgeYears) < 0.25)
+    notes.push('⚠️ Brand new account (less than 3 months old). Roast the fresh-faced newcomer.')
+  if (analysis.totalStars === 0 && profile.public_repos > 5)
+    notes.push('⚠️ Zero stars across all repos. Nobody has starred anything.')
+  if (profile.followers === 0 && profile.public_repos > 3)
+    notes.push('⚠️ Zero followers despite having repos. A legend in their own mind.')
+
   return `
 GitHub user: ${profile.login}
 Display name: ${profile.name || 'Not set'}
@@ -104,7 +125,7 @@ Website: ${profile.blog || 'None'}
 Account age: ${accountAgeYears} years
 Public repos: ${profile.public_repos}
 Followers: ${profile.followers} | Following: ${profile.following}
-Top languages: ${analysis.topLanguages.map((l) => `${l.lang} (${l.count} repos)`).join(', ') || 'None'}
+Top languages: ${analysis.topLanguages.map((l) => `${l.lang} (${l.count} repos)`).join(', ') || 'None detected'}
 Total stars earned: ${analysis.totalStars}
 Own repos: ${analysis.ownRepos.length} | Forked repos: ${analysis.forkedRepos.length}
 Repos without a description: ${analysis.noDescriptionCount}
@@ -112,10 +133,11 @@ Generic/test repo names: ${analysis.genericNames.join(', ') || 'None'}
 Last repo activity: ${analysis.lastPushed ? analysis.lastPushed.slice(0, 10) : 'Unknown'}
 
 Most starred repos:
-${analysis.mostStarred.map((r) => `- ${r.name} (⭐${r.stargazers_count})`).join('\n')}
+${analysis.mostStarred.length ? analysis.mostStarred.map((r) => `- ${r.name} (⭐${r.stargazers_count})`).join('\n') : 'None'}
 
-All recent repos:
-${repoLines.join('\n')}
+${repoLines.length ? `All recent repos:\n${repoLines.join('\n')}` : 'No public repos.'}
+
+${notes.length ? `Special notes for roast:\n${notes.join('\n')}` : ''}
 `.trim()
 }
 
@@ -315,6 +337,18 @@ app.post('/api/roast', async (req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
-app.listen(PORT, 'localhost', () => {
-  console.log(`Server running on http://localhost:${PORT}`)
+// ─── Production: serve Vite build + SPA fallback ─────────────────────────────
+if (isProd) {
+  const distPath = join(__dirname, '../client/dist')
+  if (existsSync(distPath)) {
+    app.use(express.static(distPath))
+    app.get('*', (_req, res) => {
+      res.sendFile(join(distPath, 'index.html'))
+    })
+  }
+}
+
+const host = isProd ? '0.0.0.0' : 'localhost'
+app.listen(PORT, host, () => {
+  console.log(`Server running on http://${host}:${PORT} [${isProd ? 'production' : 'development'}]`)
 })
