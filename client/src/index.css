@@ -7,5 +7,117 @@ body {
   min-height: 100vh;
   background-color: #0d1117;
   color: #e6edf3;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ── Animations ─────────────────────────────────────────── */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position: 600px 0; }
+}
+
+@keyframes flame {
+  0%, 100% { transform: scale(1) rotate(-2deg); }
+  50%       { transform: scale(1.12) rotate(2deg); }
+}
+
+@keyframes msgFade {
+  0%   { opacity: 0; transform: translateY(6px); }
+  15%  { opacity: 1; transform: translateY(0); }
+  85%  { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+
+@keyframes borderGlow {
+  0%, 100% { box-shadow: 0 0 12px 0 rgba(249, 115, 22, 0.15); }
+  50%       { box-shadow: 0 0 28px 4px rgba(249, 115, 22, 0.35); }
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* ── Utility classes ────────────────────────────────────── */
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease both;
+}
+
+.animate-flame {
+  animation: flame 2s ease-in-out infinite;
+  display: inline-block;
+}
+
+.animate-msg {
+  animation: msgFade 2.8s ease-in-out both;
+}
+
+.animate-border-glow {
+  animation: borderGlow 2.5s ease-in-out infinite;
+}
+
+.animate-cursor {
+  animation: cursorBlink 1.05s step-start infinite;
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    #1c2129 25%,
+    #272e38 50%,
+    #1c2129 75%
+  );
+  background-size: 600px 100%;
+  animation: shimmer 1.6s infinite linear;
+  border-radius: 8px;
+}
+
+/* ── Gradient text ──────────────────────────────────────── */
+
+.gradient-text {
+  background: linear-gradient(135deg, #ffffff 0%, #fb923c 60%, #f97316 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Roast box glow border ──────────────────────────────── */
+
+.roast-box {
+  border: 1px solid rgba(249, 115, 22, 0.5);
+  box-shadow: 0 0 0 0 rgba(249, 115, 22, 0);
+}
+
+.roast-box.streaming {
+  animation: borderGlow 2s ease-in-out infinite;
+}
+
+/* ── Input focus ring ───────────────────────────────────── */
+
+.username-input:focus {
+  outline: none;
+  border-color: #f97316;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.15);
+}
+
+/* ── Style button active glow ───────────────────────────── */
+
+.style-btn-active {
+  box-shadow: 0 0 12px rgba(249, 115, 22, 0.4);
 }
