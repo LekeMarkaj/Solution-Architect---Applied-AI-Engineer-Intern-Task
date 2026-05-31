@@ -328,8 +328,14 @@ export default function App() {
   })
 
   const handleSubmit = async () => {
-    const u = username.trim()
+    // Strip full GitHub URLs (https://github.com/user or github.com/user)
+    // and repo paths (user/repo) — keep only the username segment
+    let u = username.trim()
+    u = u.replace(/^https?:\/\//i, '')     // remove protocol
+    u = u.replace(/^github\.com\//i, '')   // remove domain prefix
+    u = u.split('/')[0].trim()             // keep only the first segment
     if (!u) return
+    if (u !== username.trim()) setUsername(u)  // correct the input field
 
     abortRef.current?.abort()
     abortRef.current = new AbortController()

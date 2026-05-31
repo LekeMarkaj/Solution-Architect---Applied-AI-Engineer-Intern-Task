@@ -160,7 +160,8 @@ app.get('/api/github/:username', async (req, res) => {
     ])
 
     if (profileRes.status === 404) {
-      return res.status(404).json({ error: `GitHub user "${username}" not found.` })
+      const hint = username.includes('/') ? ' (tip: enter just the username, not a repo path like user/repo)' : ''
+      return res.status(404).json({ error: `GitHub user "${username}" not found.${hint}` })
     }
 
     const rateLimitError = checkRateLimit(profileRes)
@@ -228,7 +229,8 @@ app.post('/api/roast', async (req, res) => {
     ])
 
     if (profileRes.status === 404) {
-      return res.status(404).json({ error: `GitHub user "${username}" not found.` })
+      const hint = username.includes('/') ? ' (tip: enter just the username, not a repo path like user/repo)' : ''
+      return res.status(404).json({ error: `GitHub user "${username}" not found.${hint}` })
     }
 
     const rateLimitError = checkRateLimit(profileRes)
