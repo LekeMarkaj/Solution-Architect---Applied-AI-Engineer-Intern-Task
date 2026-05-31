@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 const ROAST_STYLES = [
   { id: 'default', label: '🔥 Classic Roast' },
@@ -22,6 +22,7 @@ interface GitHubProfile {
   name: string | null
   avatar_url: string
   bio: string | null
+  location?: string | null
   public_repos: number
   followers: number
   following: number
@@ -38,12 +39,6 @@ interface RepoStats {
 }
 
 interface ProfileData {
-  profile: GitHubProfile
-  stats: RepoStats
-}
-
-interface RoastResult {
-  roast: string
   profile: GitHubProfile
   stats: RepoStats
 }
@@ -72,7 +67,7 @@ function langClass(lang: string) {
 
 function accountAge(createdAt?: string) {
   if (!createdAt) return null
-  const years = ((Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24 * 365))
+  const years = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60 * 24 * 365)
   if (years < 1) return `${Math.floor(years * 12)}mo old`
   return `${years.toFixed(1)}yr old`
 }
@@ -93,12 +88,11 @@ function ProfileCard({ profile, stats }: ProfileData) {
           </p>
           <p className="text-gray-400 text-sm">@{profile.login}</p>
           {profile.bio && (
-            <p className="text-gray-400 text-sm mt-1 truncate">{profile.bio}</p>
+            <p className="text-gray-400 text-sm mt-1 line-clamp-2">{profile.bio}</p>
           )}
         </div>
       </div>
 
-      {/* Stats row */}
       <div className="mt-4 grid grid-cols-4 gap-2 text-center">
         {[
           { label: 'Repos', value: profile.public_repos },
@@ -113,7 +107,6 @@ function ProfileCard({ profile, stats }: ProfileData) {
         ))}
       </div>
 
-      {/* Top languages */}
       {stats.topLanguages.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {stats.topLanguages.map(({ lang, count }) => (
@@ -130,6 +123,18 @@ function ProfileCard({ profile, stats }: ProfileData) {
   )
 }
 
+// Blinking cursor component
+function Cursor() {
+  const [visible, setVisible] = useState(true)
+  useEffect(() => {
+    const t = setInterval(() => setVisible((v) => !v), 530)
+    return () => clearInterval(t)
+  }, [])
+  return (
+    <span className={`inline-block w-0.5 h-5 ml-0.5 bg-orange-400 align-middle transition-opacity ${visible ? 'opacity-100' : 'opacity-0'}`} />
+  )
+}
+
 export default function App() {
   const [username, setUsername] = useState('')
   const [style, setStyle] = useState('default')
@@ -138,47 +143,63 @@ export default function App() {
   const [preview, setPreview] = useState<ProfileData | null>(null)
 
   const [roastLoading, setRoastLoading] = useState(false)
-  const [result, setResult] = useState<RoastResult | null>(null)
+  const [streaming, setStreaming] = useState(false)
+  const [roastText, setRoastText] = useState('')
+  const [roastDone, setRoastDone] = useState(false)
 
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
-  const loadingMsgRef = useRef(LOADING_MESSAGES[Math.floor(Math.random() * LOADING_MESSAGES.length)])
+  const loadingMsgRef = useRef(LOADING_MESSAGES[0])
+  const abortRef = useRef<AbortController | null>(null)
 
   const reset = () => {
+    abortRef.current?.abort()
     setPreview(null)
-    setResult(null)
+    setRoastText('')
+    setRoastDone(false)
+    setStreaming(false)
+    setRoastLoading(false)
+    setPreviewLoading(false)
     setError(null)
     setUsername('')
-    setPreviewLoading(false)
-    setRoastLoading(false)
   }
 
   const handleSubmit = async () => {
     const u = username.trim()
     if (!u) return
 
-    setError(null)
-    setResult(null)
-    setPreview(null)
-    setPreviewLoading(true)
-    loadingMsgRef.current = LOADING_MESSAGES[Math.floor(Math.random() * LOADING_MESSAGES.length)]
+    // Cancel any ongoing stream
+    abortRef.current?.abort()
+    abortRef.current = new AbortController()
 
-    // Step 1: fetch profile preview
+    setError(null)
+    setRoastText('')
+    setRoastDone(false)
+    setStreaming(false)
+    setPreview(null)
+
+    loadingMsgRef.current =
+      LOADING_MESSAGES[Math.floor(Math.random() * LOADING_MESSAGES.length)]
+
+    // ── Step 1: fetch profile preview ──────────────────────────────────────────
+    setPreviewLoading(true)
     let profileData: ProfileData | null = null
     try {
-      const res = await fetch(`/api/github/${encodeURIComponent(u)}`)
+      const res = await fetch(`/api/github/${encodeURIComponent(u)}`, {
+        signal: abortRef.current.signal,
+      })
       const data = await res.json()
       if (!res.ok) {
         setError(data.error || 'Could not fetch GitHub profile.')
-        setPreviewLoading(false)
         return
       }
       profileData = data
       setPreview(data)
-    } catch {
-      setError('Network error fetching profile. Please try again.')
-      setPreviewLoading(false)
+    } catch (err: unknown) {
+      if ((err as Error).name !== 'AbortError') {
+        setError('Network error fetching profile. Please try again.')
+      }
       return
     } finally {
       setPreviewLoading(false)
@@ -186,36 +207,83 @@ export default function App() {
 
     if (!profileData) return
 
-    // Step 2: generate roast
+    // ── Step 2: stream roast via SSE ───────────────────────────────────────────
     setRoastLoading(true)
     try {
       const res = await fetch('/api/roast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: u, style }),
+        signal: abortRef.current.signal,
       })
-      const data = await res.json()
-      if (!res.ok) {
+
+      // If server returned a JSON error (before streaming started)
+      const contentType = res.headers.get('content-type') || ''
+      if (!res.ok || contentType.includes('application/json')) {
+        const data = await res.json()
         setError(data.error || 'Failed to generate roast.')
-      } else {
-        setResult(data)
+        return
       }
-    } catch {
-      setError('Network error generating roast. Please try again.')
+
+      // It's an SSE stream — read it
+      setRoastLoading(false)
+      setStreaming(true)
+
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // SSE lines are separated by \n\n; split on newlines and process
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const raw = line.slice(6).trim()
+          if (!raw) continue
+
+          try {
+            const event = JSON.parse(raw)
+            if (event.type === 'token') {
+              setRoastText((prev) => prev + event.text)
+            } else if (event.type === 'done') {
+              setStreaming(false)
+              setRoastDone(true)
+            } else if (event.type === 'error') {
+              setError(event.message)
+              setStreaming(false)
+            }
+          } catch {
+            // malformed SSE line — skip
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if ((err as Error).name !== 'AbortError') {
+        setError('Network error generating roast. Please try again.')
+      }
+      setStreaming(false)
     } finally {
       setRoastLoading(false)
     }
   }
 
   const handleCopy = () => {
-    if (result?.roast) {
-      navigator.clipboard.writeText(result.roast)
+    if (roastText) {
+      navigator.clipboard.writeText(roastText)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
   }
 
-  const isLoading = previewLoading || roastLoading
+  const isActive = previewLoading || roastLoading || streaming
+  const showRoastBox = roastText.length > 0
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-start px-4 py-16">
@@ -240,17 +308,17 @@ export default function App() {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !isLoading && handleSubmit()}
+              onKeyDown={(e) => e.key === 'Enter' && !isActive && handleSubmit()}
               placeholder="e.g. torvalds"
-              disabled={isLoading}
+              disabled={isActive}
               className="flex-1 bg-gray-800 border border-gray-600 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition disabled:opacity-50"
             />
             <button
               onClick={handleSubmit}
-              disabled={isLoading || !username.trim()}
+              disabled={isActive || !username.trim()}
               className="bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-6 py-3 rounded-xl transition"
             >
-              {isLoading ? '…' : 'Roast 🔥'}
+              {isActive ? '…' : 'Roast 🔥'}
             </button>
           </div>
 
@@ -264,7 +332,7 @@ export default function App() {
                 <button
                   key={s.id}
                   onClick={() => setStyle(s.id)}
-                  disabled={isLoading}
+                  disabled={isActive}
                   className={`px-4 py-2 rounded-full text-sm font-medium transition border disabled:opacity-50 ${
                     style === s.id
                       ? 'bg-orange-500 border-orange-500 text-white'
@@ -278,7 +346,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* Step 1 loading: fetching profile */}
+        {/* Step 1: profile fetch loading */}
         {previewLoading && (
           <div className="text-center py-8 text-gray-400">
             <div className="text-3xl mb-3 animate-spin inline-block">⚙️</div>
@@ -286,14 +354,14 @@ export default function App() {
           </div>
         )}
 
-        {/* Profile preview (shown while roast loads) */}
-        {preview && !result && (
+        {/* Profile card (shown while roast generates + after) */}
+        {preview && (
           <div className="mb-4">
             <ProfileCard profile={preview.profile} stats={preview.stats} />
           </div>
         )}
 
-        {/* Step 2 loading: generating roast */}
+        {/* Step 2: roast fetch loading (before stream starts) */}
         {roastLoading && (
           <div className="text-center py-8 text-gray-400">
             <div className="text-3xl mb-3">🎤</div>
@@ -301,30 +369,16 @@ export default function App() {
           </div>
         )}
 
-        {/* Error */}
-        {error && (
-          <div className="bg-red-900/30 border border-red-700 rounded-2xl p-6 text-red-300">
-            <p className="font-medium">⚠️ {error}</p>
-            <button
-              onClick={reset}
-              className="mt-3 text-sm text-red-400 hover:text-red-300 underline"
-            >
-              Try again
-            </button>
-          </div>
-        )}
+        {/* Roast streaming / result box */}
+        {showRoastBox && (
+          <div className="bg-gray-900 border border-orange-500/40 rounded-2xl p-6">
+            <div className="text-2xl mb-3">🎤</div>
+            <p className="text-gray-200 text-lg leading-relaxed whitespace-pre-wrap">
+              {roastText}
+              {streaming && <Cursor />}
+            </p>
 
-        {/* Result */}
-        {result && (
-          <div className="space-y-4">
-            <ProfileCard profile={result.profile} stats={result.stats} />
-
-            {/* Roast box */}
-            <div className="bg-gray-900 border border-orange-500/40 rounded-2xl p-6">
-              <div className="text-2xl mb-3">🎤</div>
-              <p className="text-gray-200 text-lg leading-relaxed whitespace-pre-wrap">
-                {result.roast}
-              </p>
+            {roastDone && (
               <div className="mt-5 flex flex-wrap gap-3">
                 <button
                   onClick={handleCopy}
@@ -339,7 +393,20 @@ export default function App() {
                   🔄 Roast another
                 </button>
               </div>
-            </div>
+            )}
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="bg-red-900/30 border border-red-700 rounded-2xl p-6 text-red-300">
+            <p className="font-medium">⚠️ {error}</p>
+            <button
+              onClick={reset}
+              className="mt-3 text-sm text-red-400 hover:text-red-300 underline"
+            >
+              Try again
+            </button>
           </div>
         )}
       </div>

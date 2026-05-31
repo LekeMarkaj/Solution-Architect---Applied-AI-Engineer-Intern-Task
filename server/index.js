@@ -12,13 +12,18 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
 
 const STYLE_PROMPTS = {
   default: 'You are a witty comedian doing a friendly, light-hearted roast. Be funny and specific but never mean-spirited.',
-  corporate: 'You are a management consultant who speaks exclusively in corporate jargon and buzzwords. Translate their GitHub activity into synergy-filled corporate speak while roasting them. Use terms like "leverage", "paradigm shift", "circle back", "bandwidth", "boil the ocean".',
-  pirate: 'You are a pirate captain roasting a fellow seafarer. Use pirate slang, nautical metaphors, and old English pirate speak throughout. Arr!',
-  haiku: 'You are a haiku master. Roast the developer using ONLY haikus (strict 5-7-5 syllable structure). Write exactly 4 haikus about their coding habits, repos, and career. Label each haiku with a Roman numeral.',
-  genz: 'You are a Gen Z developer roasting someone. Use Gen Z slang: "slay", "lowkey", "no cap", "bussin", "understood the assignment", "rent free", "it\'s giving", "based". Be chaotic and unhinged in a funny way.',
+  corporate:
+    'You are a management consultant who speaks exclusively in corporate jargon and buzzwords. Translate their GitHub activity into synergy-filled corporate speak while roasting them. Use terms like "leverage", "paradigm shift", "circle back", "bandwidth", "boil the ocean".',
+  pirate:
+    'You are a pirate captain roasting a fellow seafarer. Use pirate slang, nautical metaphors, and old English pirate speak throughout. Arr!',
+  haiku:
+    'You are a haiku master. Roast the developer using ONLY haikus (strict 5-7-5 syllable structure). Write exactly 4 haikus about their coding habits, repos, and career. Label each haiku with a Roman numeral.',
+  genz:
+    'You are a Gen Z developer roasting someone. Use Gen Z slang: "slay", "lowkey", "no cap", "bussin", "understood the assignment", "rent free", "it\'s giving", "based". Be chaotic and unhinged in a funny way.',
 }
 
-// Helper: make authenticated GitHub API request
+// ─── GitHub helpers ───────────────────────────────────────────────────────────
+
 function githubFetch(path) {
   const headers = { 'User-Agent': 'RoastMyGitHub/1.0' }
   if (process.env.GITHUB_TOKEN) {
@@ -27,7 +32,6 @@ function githubFetch(path) {
   return fetch(`https://api.github.com${path}`, { headers })
 }
 
-// Helper: handle GitHub rate limit errors
 function checkRateLimit(res) {
   const remaining = res.headers.get('X-RateLimit-Remaining')
   const reset = res.headers.get('X-RateLimit-Reset')
@@ -35,17 +39,15 @@ function checkRateLimit(res) {
     const resetTime = reset
       ? new Date(parseInt(reset) * 1000).toLocaleTimeString()
       : 'soon'
-    return `GitHub API rate limit exceeded. Resets at ${resetTime}. Add a GitHub token to increase the limit.`
+    return `GitHub API rate limit exceeded. Resets at ${resetTime}.`
   }
   return null
 }
 
-// Helper: extract rich data from repos
 function analyzeRepos(repos) {
   const ownRepos = repos.filter((r) => !r.fork)
   const forkedRepos = repos.filter((r) => r.fork)
 
-  // Language frequency map
   const langMap = {}
   for (const r of ownRepos) {
     if (r.language) langMap[r.language] = (langMap[r.language] || 0) + 1
@@ -55,38 +57,29 @@ function analyzeRepos(repos) {
     .slice(0, 5)
     .map(([lang, count]) => ({ lang, count }))
 
-  // Star stats
   const totalStars = repos.reduce((sum, r) => sum + r.stargazers_count, 0)
-  const mostStarred = [...repos].sort((a, b) => b.stargazers_count - a.stargazers_count).slice(0, 3)
+  const mostStarred = [...repos]
+    .sort((a, b) => b.stargazers_count - a.stargazers_count)
+    .slice(0, 3)
 
-  // Activity: find last pushed date across all repos
   const lastPushed = repos
     .map((r) => r.pushed_at)
     .filter(Boolean)
     .sort()
     .reverse()[0]
 
-  // Repos with no description and no readme (proxy: empty description)
   const noDescriptionCount = ownRepos.filter((r) => !r.description).length
-
-  // Repos named with generic names
   const genericNames = ownRepos
     .map((r) => r.name.toLowerCase())
-    .filter((n) => ['test', 'hello-world', 'untitled', 'project', 'demo', 'practice', 'learning'].some((g) => n.includes(g)))
+    .filter((n) =>
+      ['test', 'hello-world', 'untitled', 'project', 'demo', 'practice', 'learning'].some(
+        (g) => n.includes(g)
+      )
+    )
 
-  return {
-    ownRepos,
-    forkedRepos,
-    topLanguages,
-    totalStars,
-    mostStarred,
-    lastPushed,
-    noDescriptionCount,
-    genericNames,
-  }
+  return { ownRepos, forkedRepos, topLanguages, totalStars, mostStarred, lastPushed, noDescriptionCount, genericNames }
 }
 
-// Helper: build LLM context string from profile + repos
 function buildUserContext(profile, repos, analysis) {
   const accountAgeYears = profile.created_at
     ? ((Date.now() - new Date(profile.created_at).getTime()) / (1000 * 60 * 60 * 24 * 365)).toFixed(1)
@@ -126,12 +119,19 @@ ${repoLines.join('\n')}
 `.trim()
 }
 
-// GET /api/github/:username — fetch and return rich profile data
+// ─── SSE helper ───────────────────────────────────────────────────────────────
+
+function sendSSE(res, event) {
+  res.write(`data: ${JSON.stringify(event)}\n\n`)
+}
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
+
+// GET /api/github/:username — profile preview (used before roast)
 app.get('/api/github/:username', async (req, res) => {
   const { username } = req.params
 
   try {
-    // Fetch profile and repos in parallel
     const [profileRes, reposRes] = await Promise.all([
       githubFetch(`/users/${username}`),
       githubFetch(`/users/${username}/repos?sort=updated&per_page=30&type=public`),
@@ -142,9 +142,7 @@ app.get('/api/github/:username', async (req, res) => {
     }
 
     const rateLimitError = checkRateLimit(profileRes)
-    if (rateLimitError) {
-      return res.status(429).json({ error: rateLimitError })
-    }
+    if (rateLimitError) return res.status(429).json({ error: rateLimitError })
 
     if (!profileRes.ok) {
       return res.status(502).json({ error: 'Could not reach the GitHub API. Try again in a moment.' })
@@ -191,7 +189,7 @@ app.get('/api/github/:username', async (req, res) => {
   }
 })
 
-// POST /api/roast — generate roast using Groq
+// POST /api/roast — streaming SSE roast generation
 app.post('/api/roast', async (req, res) => {
   const { username, style = 'default' } = req.body
 
@@ -199,38 +197,81 @@ app.post('/api/roast', async (req, res) => {
     return res.status(400).json({ error: 'Username is required.' })
   }
 
+  // ── Step 1: fetch GitHub data (errors returned as plain JSON before streaming) ──
+  let profile, repos, analysis
   try {
-    // Fetch profile and repos in parallel
     const [profileRes, reposRes] = await Promise.all([
       githubFetch(`/users/${username}`),
       githubFetch(`/users/${username}/repos?sort=updated&per_page=30&type=public`),
     ])
 
     if (profileRes.status === 404) {
-      return res.status(404).json({ error: `GitHub user "${username}" not found. Check the username and try again.` })
+      return res.status(404).json({ error: `GitHub user "${username}" not found.` })
     }
 
     const rateLimitError = checkRateLimit(profileRes)
-    if (rateLimitError) {
-      return res.status(429).json({ error: rateLimitError })
-    }
+    if (rateLimitError) return res.status(429).json({ error: rateLimitError })
 
     if (!profileRes.ok) {
       return res.status(502).json({ error: 'Could not reach the GitHub API. Try again in a moment.' })
     }
 
-    const profile = await profileRes.json()
-    const repos = reposRes.ok ? await reposRes.json() : []
+    profile = await profileRes.json()
+    repos = reposRes.ok ? await reposRes.json() : []
 
     if (!Array.isArray(repos)) {
       return res.status(502).json({ error: 'Unexpected GitHub response. Try again.' })
     }
 
-    const analysis = analyzeRepos(repos)
+    analysis = analyzeRepos(repos)
+  } catch (err) {
+    console.error('GitHub fetch error (roast):', err)
+    return res.status(502).json({ error: 'Failed to fetch GitHub data. Please try again.' })
+  }
+
+  // ── Step 2: switch to SSE streaming ──────────────────────────────────────────
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.flushHeaders()
+
+  // Send profile/stats as first event so frontend can update its card
+  sendSSE(res, {
+    type: 'meta',
+    profile: {
+      login: profile.login,
+      name: profile.name,
+      avatar_url: profile.avatar_url,
+      bio: profile.bio,
+      public_repos: profile.public_repos,
+      followers: profile.followers,
+      following: profile.following,
+      created_at: profile.created_at,
+    },
+    stats: {
+      topLanguages: analysis.topLanguages,
+      totalStars: analysis.totalStars,
+      ownRepos: analysis.ownRepos.length,
+      forkedRepos: analysis.forkedRepos.length,
+      mostStarred: analysis.mostStarred.map((r) => ({
+        name: r.name,
+        stars: r.stargazers_count,
+        language: r.language,
+      })),
+    },
+  })
+
+  // Handle client disconnect
+  let aborted = false
+  req.on('close', () => { aborted = true })
+
+  // ── Step 3: stream Groq response ─────────────────────────────────────────────
+  try {
     const userContext = buildUserContext(profile, repos, analysis)
     const systemPrompt = STYLE_PROMPTS[style] || STYLE_PROMPTS.default
 
-    const completion = await groq.chat.completions.create({
+    const stream = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [
         { role: 'system', content: systemPrompt },
@@ -241,35 +282,34 @@ app.post('/api/roast', async (req, res) => {
       ],
       temperature: 0.9,
       max_tokens: 700,
+      stream: true,
     })
 
-    const roast = completion.choices[0]?.message?.content?.trim() || 'Could not generate roast.'
+    for await (const chunk of stream) {
+      if (aborted) break
+      const text = chunk.choices[0]?.delta?.content || ''
+      if (text) {
+        sendSSE(res, { type: 'token', text })
+      }
+    }
 
-    return res.json({
-      roast,
-      profile: {
-        login: profile.login,
-        name: profile.name,
-        avatar_url: profile.avatar_url,
-        bio: profile.bio,
-        public_repos: profile.public_repos,
-        followers: profile.followers,
-      },
-      stats: {
-        topLanguages: analysis.topLanguages,
-        totalStars: analysis.totalStars,
-        ownRepos: analysis.ownRepos.length,
-        forkedRepos: analysis.forkedRepos.length,
-        mostStarred: analysis.mostStarred.map((r) => ({
-          name: r.name,
-          stars: r.stargazers_count,
-          language: r.language,
-        })),
-      },
-    })
+    if (!aborted) {
+      sendSSE(res, { type: 'done' })
+    }
   } catch (err) {
-    console.error('Roast error:', err)
-    return res.status(500).json({ error: 'Internal server error. Please try again.' })
+    console.error('Groq streaming error:', err)
+
+    // Distinguish Groq rate limit from other errors
+    const isGroqRateLimit = err?.status === 429
+    const message = isGroqRateLimit
+      ? 'Groq API rate limit hit. Wait a moment and try again.'
+      : 'Failed to generate roast. Please try again.'
+
+    if (!aborted) {
+      sendSSE(res, { type: 'error', message })
+    }
+  } finally {
+    res.end()
   }
 })
 
