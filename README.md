@@ -2,7 +2,7 @@
 
 An AI-powered web app that roasts developers based on their public GitHub activity. Enter a username, pick a style, and get a savage (but friendly) breakdown of your repos, commit habits, and career choices — streamed live from Groq's `llama-3.3-70b-versatile` model.
 
-**Live demo:** [roast-my-github.replit.app](https://roast-my-github.replit.app) *(deployed on Replit Autoscale)*
+**Live demo:** [solution-architect-applied-ai-engineer-intern-task--markajleka.replit.app](https://solution-architect-applied-ai-engineer-intern-task--markajleka.replit.app) *(deployed on Replit Autoscale)*
 
 ---
 
